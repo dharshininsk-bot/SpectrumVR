@@ -26,6 +26,7 @@ public class DynamicVRInventory : MonoBehaviour
 
     [Header("UI Grid Layout Setup")]
     public Image[] slotIcons = new Image[8]; // Drag your 8 child "Icon_Display" images here in order
+    private string[] storedItemNames = new string[8];
 
     [Header("Input Settings")]
     [Tooltip("Input action to trigger item pickup. Map this to VR controller buttons (e.g. Grip, Trigger, Select) or keyboard keys.")]
@@ -40,6 +41,26 @@ public class DynamicVRInventory : MonoBehaviour
     private void OnDisable()
     {
         pickupAction.action?.Disable();
+    }
+
+    private void Start()
+    {
+        // Auto-disable slot icons if they don't have a sprite assigned, marking them as empty
+        for (int i = 0; i < slotIcons.Length; i++)
+        {
+            if (slotIcons[i] != null)
+            {
+                if (slotIcons[i].sprite == null)
+                {
+                    slotIcons[i].enabled = false;
+                }
+                else
+                {
+                    slotIcons[i].enabled = true;
+                }
+            }
+            storedItemNames[i] = null;
+        }
     }
 
     void Update()
@@ -96,12 +117,20 @@ public class DynamicVRInventory : MonoBehaviour
         // Loop through all 8 available slots from top-left to bottom-right
         for (int i = 0; i < slotIcons.Length; i++)
         {
-            // Find the very first free spot (where the image component is currently disabled)
-            if (!slotIcons[i].enabled)
+            if (slotIcons[i] == null) continue;
+
+            // A slot is free if its image component is disabled, its sprite is null, or no item name is tracked
+            if (!slotIcons[i].enabled || slotIcons[i].sprite == null || string.IsNullOrEmpty(storedItemNames[i]))
             {
                 // DYNAMIC MAPPING: Grab the exact sprite loaded onto the physical object itself!
                 slotIcons[i].sprite = item.itemIcon;
                 slotIcons[i].enabled = true; // Make the UI image visible
+                
+                // Force alpha to 1.0f in case the image was set to transparent in the inspector
+                Color c = slotIcons[i].color;
+                slotIcons[i].color = new Color(c.r, c.g, c.b, 1.0f);
+                
+                storedItemNames[i] = item.itemName; // Track item name in index
 
                 Debug.Log($"Successfully mapped and added {item.itemName} to inventory slot {i + 1}!");
 
@@ -116,6 +145,41 @@ public class DynamicVRInventory : MonoBehaviour
                 }
 
                 return true; // Break the loop so it only populates ONE single slot
+            }
+        }
+        Debug.LogWarning($"Inventory is full! Could not add {item.itemName}.", this);
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if the inventory contains an item by name.
+    /// </summary>
+    public bool HasItem(string itemName)
+    {
+        for (int i = 0; i < slotIcons.Length; i++)
+        {
+            if (slotIcons[i].enabled && storedItemNames[i] == itemName)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Checks if the inventory contains an item and removes it if found.
+    /// </summary>
+    public bool ConsumeItem(string itemName)
+    {
+        for (int i = 0; i < slotIcons.Length; i++)
+        {
+            if (slotIcons[i].enabled && storedItemNames[i] == itemName)
+            {
+                slotIcons[i].sprite = null;
+                slotIcons[i].enabled = false;
+                storedItemNames[i] = null;
+                Debug.Log($"Consumed item {itemName} from slot {i + 1}.");
+                return true;
             }
         }
         return false;
