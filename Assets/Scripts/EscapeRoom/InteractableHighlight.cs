@@ -48,6 +48,7 @@ public class InteractableHighlight : MonoBehaviour
     private XRBaseInteractable interactable;
     private Dictionary<Renderer, Material[]> originalMaterials = new Dictionary<Renderer, Material[]>();
     private Dictionary<Renderer, Material[]> highlightMaterials = new Dictionary<Renderer, Material[]>();
+    private bool isHighlighted = false;
 
     private void Awake()
     {
@@ -96,8 +97,12 @@ public class InteractableHighlight : MonoBehaviour
             interactable.selectEntered.RemoveListener(OnSelectEntered);
             interactable.selectExited.RemoveListener(OnSelectExited);
         }
-        // Ensure we revert highlight when disabled
-        SetHighlightActive(false);
+        
+        // Only revert highlights if we are playing to avoid prefab and editor errors
+        if (Application.isPlaying)
+        {
+            SetHighlightActive(false);
+        }
     }
 
     private void OnHoverEntered(HoverEnterEventArgs args)
@@ -145,6 +150,10 @@ public class InteractableHighlight : MonoBehaviour
 
     private void SetHighlightActive(bool active)
     {
+        if (!Application.isPlaying) return;
+        if (active == isHighlighted) return;
+        isHighlighted = active;
+
         switch (highlightMode)
         {
             case HighlightMode.GameObjectToggle:
@@ -160,7 +169,12 @@ public class InteractableHighlight : MonoBehaviour
                     foreach (var rend in targetRenderers)
                     {
                         if (rend == null) continue;
-                        rend.materials = active ? highlightMaterials[rend] : originalMaterials[rend];
+                        
+                        // Verify we have cached materials to swap back to
+                        if (highlightMaterials.ContainsKey(rend) && originalMaterials.ContainsKey(rend))
+                        {
+                            rend.materials = active ? highlightMaterials[rend] : originalMaterials[rend];
+                        }
                     }
                 }
                 break;
@@ -169,8 +183,11 @@ public class InteractableHighlight : MonoBehaviour
                 foreach (var rend in targetRenderers)
                 {
                     if (rend == null) continue;
-                    // Note: We use materials (which instantiates them) so we don't modify the project asset shared materials.
-                    foreach (var mat in rend.materials)
+                    
+                    var mats = rend.materials;
+                    if (mats == null) continue;
+
+                    foreach (var mat in mats)
                     {
                         if (mat == null) continue;
                         if (active)
