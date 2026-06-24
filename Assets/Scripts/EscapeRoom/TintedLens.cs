@@ -24,6 +24,22 @@ namespace EscapeRoom
         [Tooltip("Optional visual mesh representation of the lens inside the socket.")]
         public GameObject lensMeshVisual;
 
+        private void OnEnable()
+        {
+            if (LensPuzzleController.Instance != null)
+            {
+                LensPuzzleController.Instance.UpdatePuzzleState();
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (LensPuzzleController.Instance != null)
+            {
+                LensPuzzleController.Instance.UpdatePuzzleState();
+            }
+        }
+
         private void Reset()
         {
             // Set up smart defaults based on the selected color enum

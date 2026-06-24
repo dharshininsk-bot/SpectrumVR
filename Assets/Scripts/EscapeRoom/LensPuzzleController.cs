@@ -2,15 +2,18 @@ using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.XR.Interaction.Toolkit;
 using UnityEngine.XR.Interaction.Toolkit.Interactors;
+using System.Collections;
 using System.Collections.Generic;
 
 namespace EscapeRoom
 {
     public class LensPuzzleController : MonoBehaviour
     {
+        public static LensPuzzleController Instance { get; private set; }
+
         [Header("Required Objects")]
-        [Tooltip("The list of active sockets inside the safe.")]
-        [SerializeField] private List<XRSocketInteractor> safeSockets = new List<XRSocketInteractor>();
+        [Tooltip("The list of duplicate lenses inside the safe.")]
+        [SerializeField] private List<TintedLens> safeLenses = new List<TintedLens>();
 
         [Tooltip("The Light component representing the spotlight inside the safe.")]
         [SerializeField] private Light safeLight;
@@ -28,6 +31,32 @@ namespace EscapeRoom
         [Tooltip("Default color when no lenses are inserted.")]
         [SerializeField] private Color defaultLightColor = Color.white;
 
+        private float defaultLightIntensity = -1f;  // -1 means not yet captured
+        private bool hasCapturedIntensity = false;
+
+        [Tooltip("Multiplies the light's intensity by this factor when a lens is active (helps compensate for subtractive darkening).")]
+        [SerializeField] private float intensityMultiplier = 2f;
+
+        [Tooltip("If true, automatically scales the mixed color channels so the highest channel is 1.0 (maintaining hue but maximizing brightness).")]
+        [SerializeField] private bool normalizeColorBrightness = true;
+
+        [Tooltip("Transparency alpha of the light beam visual (0 = invisible, 1 = fully opaque).")]
+        [Range(0f, 1f)]
+        [SerializeField] private float beamAlpha = 0.5f;
+
+        [Header("Safe Door Animation")]
+        [Tooltip("Animator that plays the 'safe_open' clip (on the safe body / lock mechanism).")]
+        [SerializeField] private Animator safeDoorAnimator;
+
+        [Tooltip("Exact name of the open animation STATE in the safeDoorAnimator controller.")]
+        [SerializeField] private string safeOpenStateName = "safe_open";
+
+        [Tooltip("Animator that plays the 'safe_door_hinge' clip (on the door pivot / hinge object).")]
+        [SerializeField] private Animator safeHingeAnimator;
+
+        [Tooltip("Exact name of the hinge animation STATE in the safeHingeAnimator controller.")]
+        [SerializeField] private string safeHingeStateName = "safe_door_hinge";
+
         [Header("Events")]
         [Tooltip("Event triggered when the safe is successfully unlocked.")]
         public UnityEvent OnSafeUnlocked;
@@ -35,84 +64,155 @@ namespace EscapeRoom
         [Tooltip("Event triggered when the light color is incorrect.")]
         public UnityEvent OnSafeLocked;
 
-        private void OnEnable()
-        {
-            foreach (var socket in safeSockets)
-            {
-                if (socket != null)
-                {
-                    socket.selectEntered.AddListener(OnSocketChanged);
-                    socket.selectExited.AddListener(OnSocketChanged);
-                }
-            }
-        }
+        // New events for door animation steps
+        [Tooltip("Event fired after the safe_open animation completes.")]
+        public UnityEvent OnDoorOpen;
 
-        private void OnDisable()
+        [Tooltip("Event fired after the safe_door_hinge animation completes.")]
+        public UnityEvent OnDoorHinge;
+
+        private bool puzzleSolved = false;
+
+        private void Awake()
         {
-            foreach (var socket in safeSockets)
+            if (Instance == null)
             {
-                if (socket != null)
-                {
-                    socket.selectEntered.RemoveListener(OnSocketChanged);
-                    socket.selectExited.RemoveListener(OnSocketChanged);
-                }
+                Instance = this;
             }
+            else if (Instance != this)
+            {
+                Destroy(gameObject);
+            }
+
+            // Disable BOTH animators immediately so nothing auto-plays before the puzzle is solved
+            if (safeDoorAnimator != null) safeDoorAnimator.enabled = false;
+            if (safeHingeAnimator != null) safeHingeAnimator.enabled = false;
         }
 
         private void Start()
         {
+            CaptureIntensityIfNeeded();
             UpdatePuzzleState();
         }
 
-        private void OnSocketChanged(BaseInteractionEventArgs args)
+        private void CaptureIntensityIfNeeded()
         {
-            UpdatePuzzleState();
+            if (!hasCapturedIntensity && safeLight != null)
+            {
+                defaultLightIntensity = safeLight.intensity;
+                hasCapturedIntensity = true;
+                Debug.Log($"[LensPuzzle] Captured spotlight baseline intensity: {defaultLightIntensity}");
+            }
         }
 
-        private void UpdatePuzzleState()
+        private void OnDestroy()
+        {
+            if (Instance == this)
+            {
+                Instance = null;
+            }
+        }
+
+        public void UpdatePuzzleState()
         {
             Color combinedColor = defaultLightColor;
             bool hasAnyLens = false;
 
-            // Compute subtractive color mixing by multiplying the color values of all active lenses
-            foreach (var socket in safeSockets)
+            // Compute subtractive color mixing by multiplying the color values of all active lenses in the safe
+            foreach (var lens in safeLenses)
             {
-                if (socket != null && socket.hasSelection)
+                if (lens != null && lens.gameObject.activeInHierarchy)
                 {
-                    if (socket.interactablesSelected.Count > 0)
+                    if (!hasAnyLens)
                     {
-                        var interactable = socket.interactablesSelected[0];
-                        if (interactable != null && interactable.transform.TryGetComponent<TintedLens>(out var lens))
-                        {
-                            if (!hasAnyLens)
-                            {
-                                combinedColor = lens.filterColor;
-                                hasAnyLens = true;
-                            }
-                            else
-                            {
-                                // Subtractive mixing: multiply the color values channel by channel
-                                combinedColor.r *= lens.filterColor.r;
-                                combinedColor.g *= lens.filterColor.g;
-                                combinedColor.b *= lens.filterColor.b;
-                            }
-                        }
+                        combinedColor = lens.filterColor;
+                        hasAnyLens = true;
+                    }
+                    else
+                    {
+                        // Subtractive mixing: multiply the color values channel by channel
+                        combinedColor.r *= lens.filterColor.r;
+                        combinedColor.g *= lens.filterColor.g;
+                        combinedColor.b *= lens.filterColor.b;
                     }
                 }
             }
 
             // Set final color
-            SetLightColor(combinedColor);
+            SetLightColor(combinedColor, hasAnyLens);
 
             // Verify target color
             if (hasAnyLens && ColorsMatch(combinedColor, targetColor))
             {
-                Debug.Log($"[LensPuzzle] Combined color is {combinedColor} - Matches Target Color! Unlocking safe...");
-                OnSafeUnlocked?.Invoke();
+                if (!puzzleSolved)
+                {
+                    puzzleSolved = true;
+                    Debug.Log($"[LensPuzzle] Combined color is {combinedColor} - Matches Target Color! Unlocking safe...");
+                    OnSafeUnlocked?.Invoke();
+                    StartCoroutine(PlaySafeOpenAndHingeAnimation());
+                }
             }
             else
             {
                 OnSafeLocked?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Plays safe_open (via safeDoorAnimator) then safe_door_hinge (via safeHingeAnimator) in sequence.
+        /// </summary>
+        private IEnumerator PlaySafeOpenAndHingeAnimation()
+        {
+            // ── Step 1: safe_open ────────────────────────────────────────────
+            if (safeDoorAnimator != null)
+            {
+                safeDoorAnimator.enabled = true;
+                safeDoorAnimator.speed   = 1f;
+                yield return null; // let Animator wake up
+
+                safeDoorAnimator.Play(safeOpenStateName, 0, 0f);
+                yield return null; // let state register
+
+                AnimatorStateInfo openInfo;
+                do
+                {
+                    yield return null;
+                    openInfo = safeDoorAnimator.GetCurrentAnimatorStateInfo(0);
+                } while (!openInfo.IsName(safeOpenStateName) || openInfo.normalizedTime < 1f);
+
+                safeDoorAnimator.enabled = false; // freeze door in open pose
+                Debug.Log("[LensPuzzle] safe_open animation completed.");
+                OnDoorOpen?.Invoke();
+            }
+            else
+            {
+                Debug.LogWarning("[LensPuzzle] safeDoorAnimator not assigned – skipping safe_open.");
+            }
+
+            // ── Step 2: safe_door_hinge ──────────────────────────────────────
+            if (safeHingeAnimator != null)
+            {
+                safeHingeAnimator.enabled = true;
+                safeHingeAnimator.speed   = 1f;
+                yield return null; // let Animator wake up
+
+                safeHingeAnimator.Play(safeHingeStateName, 0, 0f);
+                yield return null; // let state register
+
+                AnimatorStateInfo hingeInfo;
+                do
+                {
+                    yield return null;
+                    hingeInfo = safeHingeAnimator.GetCurrentAnimatorStateInfo(0);
+                } while (!hingeInfo.IsName(safeHingeStateName) || hingeInfo.normalizedTime < 1f);
+
+                safeHingeAnimator.enabled = false; // freeze door in swung-open pose
+                Debug.Log("[LensPuzzle] safe_door_hinge animation completed.");
+                OnDoorHinge?.Invoke();
+            }
+            else
+            {
+                Debug.LogWarning("[LensPuzzle] safeHingeAnimator not assigned – skipping safe_door_hinge.");
             }
         }
 
@@ -125,11 +225,31 @@ namespace EscapeRoom
             return (rDiff < colorMatchTolerance && gDiff < colorMatchTolerance && bDiff < colorMatchTolerance);
         }
 
-        private void SetLightColor(Color color)
+        private void SetLightColor(Color color, bool hasAnyLens)
         {
+            // Always capture intensity on-demand before first write, in case called before Start()
+            CaptureIntensityIfNeeded();
+
+            Color finalColor = color;
+
+            if (normalizeColorBrightness && hasAnyLens)
+            {
+                float maxChannel = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
+                if (maxChannel > 0f)
+                {
+                    finalColor.r /= maxChannel;
+                    finalColor.g /= maxChannel;
+                    finalColor.b /= maxChannel;
+                }
+            }
+
             if (safeLight != null)
             {
-                safeLight.color = color;
+                safeLight.color = finalColor;
+                float targetIntensity = hasAnyLens
+                    ? (defaultLightIntensity * intensityMultiplier)
+                    : defaultLightIntensity;
+                safeLight.intensity = targetIntensity;
                 safeLight.enabled = true;
             }
 
@@ -137,13 +257,14 @@ namespace EscapeRoom
             {
                 lightBeamRenderer.gameObject.SetActive(true);
                 Material mat = lightBeamRenderer.material;
+                Color beamColor = new Color(finalColor.r, finalColor.g, finalColor.b, beamAlpha);
                 if (mat.HasProperty("_BaseColor"))
                 {
-                    mat.SetColor("_BaseColor", new Color(color.r, color.g, color.b, 0.3f));
+                    mat.SetColor("_BaseColor", beamColor);
                 }
                 else if (mat.HasProperty("_Color"))
                 {
-                    mat.SetColor("_Color", new Color(color.r, color.g, color.b, 0.3f));
+                    mat.SetColor("_Color", beamColor);
                 }
             }
         }
