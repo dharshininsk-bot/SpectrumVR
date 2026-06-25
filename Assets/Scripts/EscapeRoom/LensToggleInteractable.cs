@@ -1,12 +1,16 @@
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.XR.Interaction.Toolkit;
-using UnityEngine.XR.Interaction.Toolkit.Interactors;
+using UnityEngine.XR.Interaction.Toolkit.Interactables;
+using System.Collections.Generic;
 
 namespace EscapeRoom
 {
-    [RequireComponent(typeof(XRSocketInteractor))]
-    public class SocketHighlight : MonoBehaviour
+    /// <summary>
+    /// Component that attaches to duplicate lens objects to handle swapping between locations
+    /// (e.g. floor vs safe) upon selection, and highlighting upon pointer hover.
+    /// </summary>
+    [RequireComponent(typeof(XRBaseInteractable))]
+    public class LensToggleInteractable : MonoBehaviour
     {
         public enum HighlightMode
         {
@@ -15,96 +19,74 @@ namespace EscapeRoom
             EmissionToggle
         }
 
+        [Header("Toggle Settings")]
+        [Tooltip("The duplicate partner lens object in the other location (e.g. safe or floor).")]
+        public GameObject partnerLens;
+
         [Header("Highlight Settings")]
-        [Tooltip("How the socket should be highlighted.")]
+        [Tooltip("Method used to highlight when hovered/pointed.")]
         public HighlightMode highlightMode = HighlightMode.EmissionToggle;
 
-        [Header("GameObject Toggle Settings")]
-        [Tooltip("GameObject to activate when highlighted (e.g. an outline mesh, hover visual).")]
+        [Tooltip("GameObject to activate when highlighted (e.g. an outline mesh or child visual).")]
         public GameObject highlightObject;
 
-        [Header("Material Settings")]
         [Tooltip("The renderer(s) to apply the highlight to. If left empty, will search this object and its children.")]
         public List<Renderer> targetRenderers = new List<Renderer>();
 
-        [Header("Material Swap Settings")]
-        [Tooltip("The material to apply when highlighted.")]
+        [Tooltip("The material to apply when hovered (if MaterialSwap).")]
         public Material highlightMaterial;
 
-        [Header("Emission Settings")]
-        [Tooltip("The emission color to apply when highlighted.")]
         [ColorUsage(true, true)]
+        [Tooltip("The emission color to apply when highlighted (if EmissionToggle).")]
         public Color highlightColor = Color.yellow;
-        
-        [Tooltip("The normal emission color of the material.")]
+
         [ColorUsage(true, true)]
+        [Tooltip("The normal emission color of the material (if EmissionToggle).")]
         public Color normalColor = Color.clear;
 
-        [Header("Activation Triggers")]
-        [Tooltip("Highlight the socket when a lens is hovering near it (ready to snap)?")]
-        public bool highlightOnHover = true;
-
-        [Tooltip("Highlight the socket when a lens is snapped inside it?")]
-        public bool highlightOnSelect = false;
-
-        private XRSocketInteractor socketInteractor;
+        private XRBaseInteractable interactable;
         private Dictionary<Renderer, Material[]> originalMaterials = new Dictionary<Renderer, Material[]>();
         private Dictionary<Renderer, Material[]> highlightMaterials = new Dictionary<Renderer, Material[]>();
         private bool isHighlighted = false;
 
         private void Awake()
         {
-            socketInteractor = GetComponent<XRSocketInteractor>();
+            interactable = GetComponent<XRBaseInteractable>();
 
-            // If no renderers are explicitly assigned, find them on this object and children
+            // Auto-gather renderers if empty
             if (targetRenderers.Count == 0)
             {
                 targetRenderers.AddRange(GetComponentsInChildren<Renderer>());
             }
 
             CacheMaterials();
-            
-            // Ensure highlight object is initially disabled
+
+            // Make sure highlight object is initially disabled if in GameObjectToggle mode
             if (highlightMode == HighlightMode.GameObjectToggle && highlightObject != null)
             {
                 highlightObject.SetActive(false);
             }
         }
 
-        private bool isGuidanceHighlighted = false;
-
-        public void SetGuidanceHighlight(bool active)
-        {
-            isGuidanceHighlighted = active;
-            UpdateHighlightState();
-        }
-
         private void OnEnable()
         {
-            if (socketInteractor != null)
+            if (interactable != null)
             {
-                if (highlightOnHover)
-                {
-                    socketInteractor.hoverEntered.AddListener(OnHoverEntered);
-                    socketInteractor.hoverExited.AddListener(OnHoverExited);
-                }
-                // Always listen to select events so we can correctly handle guidance states
-                socketInteractor.selectEntered.AddListener(OnSelectEntered);
-                socketInteractor.selectExited.AddListener(OnSelectExited);
+                interactable.hoverEntered.AddListener(OnHoverEntered);
+                interactable.hoverExited.AddListener(OnHoverExited);
+                interactable.selectEntered.AddListener(OnSelectEntered);
             }
         }
 
         private void OnDisable()
         {
-            if (socketInteractor != null)
+            if (interactable != null)
             {
-                socketInteractor.hoverEntered.RemoveListener(OnHoverEntered);
-                socketInteractor.hoverExited.RemoveListener(OnHoverExited);
-                socketInteractor.selectEntered.RemoveListener(OnSelectEntered);
-                socketInteractor.selectExited.RemoveListener(OnSelectExited);
+                interactable.hoverEntered.RemoveListener(OnHoverEntered);
+                interactable.hoverExited.RemoveListener(OnHoverExited);
+                interactable.selectEntered.RemoveListener(OnSelectEntered);
             }
-            
-            // Only revert highlights if we are playing to avoid prefab and editor errors
+
             if (Application.isPlaying)
             {
                 SetHighlightActive(false);
@@ -113,44 +95,32 @@ namespace EscapeRoom
 
         private void OnHoverEntered(HoverEnterEventArgs args)
         {
-            UpdateHighlightState();
+            SetHighlightActive(true);
         }
 
         private void OnHoverExited(HoverExitEventArgs args)
         {
-            UpdateHighlightState();
+            SetHighlightActive(false);
         }
 
         private void OnSelectEntered(SelectEnterEventArgs args)
         {
-            UpdateHighlightState();
-        }
+            // Reset highlight before disabling the object
+            SetHighlightActive(false);
 
-        private void OnSelectExited(SelectExitEventArgs args)
-        {
-            UpdateHighlightState();
-        }
-
-        public void UpdateHighlightState()
-        {
-            bool shouldHighlight = isGuidanceHighlighted;
-
-            if (socketInteractor != null)
+            if (partnerLens != null)
             {
-                // Highlight when hovered
-                if (highlightOnHover && socketInteractor.hasHover)
-                {
-                    shouldHighlight = true;
-                }
-
-                // Highlight when selected/snapped (if enabled)
-                if (highlightOnSelect && socketInteractor.hasSelection)
-                {
-                    shouldHighlight = true;
-                }
+                // Toggle visibility: activate partner and deactivate self
+                partnerLens.SetActive(true);
+                
+                Debug.Log($"[LensToggle] Toggled lens position. Activated {partnerLens.name}, deactivated {gameObject.name}.");
+            }
+            else
+            {
+                Debug.LogWarning($"[LensToggle] Cannot toggle. Partner lens is not assigned on {gameObject.name}!", this);
             }
 
-            SetHighlightActive(shouldHighlight);
+            gameObject.SetActive(false);
         }
 
         private void CacheMaterials()
