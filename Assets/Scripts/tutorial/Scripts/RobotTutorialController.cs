@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.Video;
 
 public class RobotTutorialController : MonoBehaviour
 {
@@ -29,44 +30,43 @@ public class RobotTutorialController : MonoBehaviour
     [Tooltip("The exact spots (Transforms) where the robot should wait for each of the 4 spaces.")]
     [SerializeField] private Transform[] robotWaitingPoints = new Transform[4];
 
-    [Header("Explanation Settings")]
-    [Tooltip("How long the robot will spend 'explaining' (printing) before moving to the next space.")]
-    [SerializeField] private float explanationDuration = 5.0f;
+    [Header("Media Setup (Two Players, One Render Texture)")]
+    [Tooltip("The Video Player that holds your looping Blinking/Idle video clip.")]
+    [SerializeField] private VideoPlayer idleVideoPlayer;
+
+    [Tooltip("The Video Player that holds your looping Talking video clip.")]
+    [SerializeField] private VideoPlayer talkingVideoPlayer;
+
+    [Tooltip("The Audio Source component attached to the robot for voiceovers.")]
+    [SerializeField] private AudioSource voiceAudioSource;
+
+    [Header("Voiceover Tracks")]
+    [Tooltip("Assign your 4 audio files here in sequence (0=Additive, 1=TV, 2=Subtractive, 3=Printer).")]
+    [SerializeField] private AudioClip[] spaceVoiceovers = new AudioClip[4];
 
     [Header("User Reference (Optional check for trigger)")]
     [Tooltip("The user/player transform to detect. If left null, any object tagged 'Player' will trigger the space.")]
     [SerializeField] private Transform userTransform;
 
-    private int currentSpaceIndex = 0; // 0 = Additive, 1 = TV, 2 = Subtractive, 3 = Printer
+    private int currentSpaceIndex = 0; 
     private TutorialState currentState = TutorialState.Idle;
-    private float explanationTimer = 0f;
     private RobotLookAt robotLookAtComponent;
 
-    // Read-only properties for external scripts (like SpaceTrigger)
     public Transform UserTransform => userTransform;
     public int CurrentSpaceIndex => currentSpaceIndex;
     public TutorialState CurrentState => currentState;
 
     private void Start()
     {
-        if (robotTransform == null)
-        {
-            robotTransform = transform;
-        }
+        if (robotTransform == null) robotTransform = transform;
 
-        // Try to find the RobotLookAt component so we can manage it during movement
         robotLookAtComponent = robotTransform.GetComponent<RobotLookAt>();
+        if (voiceAudioSource == null) voiceAudioSource = robotTransform.GetComponent<AudioSource>();
 
-        // Validate waiting points
-        for (int i = 0; i < robotWaitingPoints.Length; i++)
-        {
-            if (robotWaitingPoints[i] == null)
-            {
-                Debug.LogError($"[RobotTutorial] Waiting Point for Space {i + 1} is not assigned in the inspector!", this);
-            }
-        }
+        // Ensure proper starting state for the video faces
+        InitializeVideoPlayers();
 
-        // Start the tutorial by moving to the first space
+        // Start the tutorial sequence
         StartMovingToSpace(0);
     }
 
@@ -77,10 +77,24 @@ public class RobotTutorialController : MonoBehaviour
             case TutorialState.MovingToSpace:
                 MoveRobotTowardsTarget();
                 break;
+        }
+    }
 
-            case TutorialState.Explaining:
-                UpdateExplanation();
-                break;
+    private void InitializeVideoPlayers()
+    {
+        if (idleVideoPlayer != null && talkingVideoPlayer != null)
+        {
+            // Set both to loop internally
+            idleVideoPlayer.isLooping = true;
+            talkingVideoPlayer.isLooping = true;
+
+            // Start with only the blinking/idle face running
+            idleVideoPlayer.Play();
+            talkingVideoPlayer.Stop(); 
+        }
+        else
+        {
+            Debug.LogError("[RobotTutorial] Please assign BOTH the Idle Video Player and Talking Video Player in the Inspector!", this);
         }
     }
 
@@ -90,41 +104,32 @@ public class RobotTutorialController : MonoBehaviour
         {
             Debug.Log("[RobotTutorial] All spaces completed! Tutorial finished.");
             currentState = TutorialState.Completed;
+            
+            // Revert back to happy blinking face at the end
+            if (idleVideoPlayer != null) idleVideoPlayer.Play();
+            if (talkingVideoPlayer != null) talkingVideoPlayer.Stop();
             return;
         }
 
         currentSpaceIndex = spaceIndex;
         currentState = TutorialState.MovingToSpace;
 
-        string spaceName = GetSpaceName(spaceIndex);
-        Debug.Log($"[RobotTutorial] robo moving to {spaceIndex + 1} ({spaceName})");
-
-        // Temporarily disable RobotLookAt while moving, so the robot can face the direction it is traveling
-        if (robotLookAtComponent != null)
-        {
-            robotLookAtComponent.enabled = false;
-        }
+        if (robotLookAtComponent != null) robotLookAtComponent.enabled = false;
     }
 
     private void MoveRobotTowardsTarget()
     {
         Vector3 targetPosition = robotWaitingPoints[currentSpaceIndex].position;
-        
-        // Move the robot towards the target position
         robotTransform.position = Vector3.MoveTowards(robotTransform.position, targetPosition, movementSpeed * Time.deltaTime);
 
-        // Smoothly rotate to face the direction of movement
         Vector3 moveDirection = targetPosition - robotTransform.position;
-        moveDirection.y = 0; // Keep rotation horizontal
+        moveDirection.y = 0; 
         if (moveDirection.sqrMagnitude > 0.001f)
         {
-            Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
-            // Apply the model's rotation offset (e.g. if the face is on the back)
-            targetRotation *= Quaternion.Euler(rotationOffset);
+            Quaternion targetRotation = Quaternion.LookRotation(moveDirection) * Quaternion.Euler(rotationOffset);
             robotTransform.rotation = Quaternion.Slerp(robotTransform.rotation, targetRotation, 10f * Time.deltaTime);
         }
 
-        // Check if arrived
         if (Vector3.Distance(robotTransform.position, targetPosition) <= arrivalThreshold)
         {
             OnArrivedAtSpace();
@@ -134,40 +139,51 @@ public class RobotTutorialController : MonoBehaviour
     private void OnArrivedAtSpace()
     {
         currentState = TutorialState.WaitingForUser;
-        string spaceName = GetSpaceName(currentSpaceIndex);
-        Debug.Log($"[RobotTutorial] robo came to {currentSpaceIndex + 1} ({spaceName})");
-
-        // Re-enable RobotLookAt so the robot turns to face/track the user while waiting
-        if (robotLookAtComponent != null)
-        {
-            robotLookAtComponent.enabled = true;
-        }
+        if (robotLookAtComponent != null) robotLookAtComponent.enabled = true;
     }
 
     public void OnUserEnteredSpace(int spaceIndex)
     {
-        // We only care if the user enters the space the robot is currently waiting at
-        if (currentState == TutorialState.WaitingForUser && spaceIndex - 1 == currentSpaceIndex)
+        if (currentState == TutorialState.WaitingForUser && (spaceIndex - 1) == currentSpaceIndex)
         {
-            string spaceName = GetSpaceName(currentSpaceIndex);
-            Debug.Log($"[RobotTutorial] user came inside {spaceIndex} ({spaceName})");
-            
             currentState = TutorialState.Explaining;
-            explanationTimer = 0f;
+            StartCoroutine(PlayExplanationSequence());
         }
     }
 
-    private void UpdateExplanation()
+    private IEnumerator PlayExplanationSequence()
     {
-        explanationTimer += Time.deltaTime;
-        if (explanationTimer >= explanationDuration)
+        string spaceName = GetSpaceName(currentSpaceIndex);
+        Debug.Log($"[RobotTutorial] Robo starting speech for Space {currentSpaceIndex + 1} ({spaceName})");
+
+        // 1. SWAP FACE: Stop the idle player, start the talking player
+        if (idleVideoPlayer != null) idleVideoPlayer.Stop();
+        if (talkingVideoPlayer != null) talkingVideoPlayer.Play();
+
+        // 2. Play the matching audio clip
+        if (voiceAudioSource != null && currentSpaceIndex < spaceVoiceovers.Length && spaceVoiceovers[currentSpaceIndex] != null)
         {
-            string spaceName = GetSpaceName(currentSpaceIndex);
-            Debug.Log($"[RobotTutorial] robo finished explaining Space {currentSpaceIndex + 1} ({spaceName})");
-            
-            // Move to the next space
-            StartMovingToSpace(currentSpaceIndex + 1);
+            AudioClip currentClip = spaceVoiceovers[currentSpaceIndex];
+            voiceAudioSource.clip = currentClip;
+            voiceAudioSource.Play();
+
+            // 3. Keep running the talking video until the audio timeline track finishes completely
+            yield return new WaitWhile(() => voiceAudioSource.isPlaying);
         }
+        else
+        {
+            Debug.LogWarning($"[RobotTutorial] Audio track missing for Space {currentSpaceIndex + 1}! Defaulting to 5 seconds.");
+            yield return new WaitForSeconds(5.0f);
+        }
+
+        Debug.Log($"[RobotTutorial] Robo finished audio for Space {currentSpaceIndex + 1}. Swapping back to idle face.");
+
+        // 4. SWAP FACE BACK: Stop talking player, resume blinking/idle player
+        if (talkingVideoPlayer != null) talkingVideoPlayer.Stop();
+        if (idleVideoPlayer != null) idleVideoPlayer.Play();
+
+        // 5. Advance automatically to the next target point
+        StartMovingToSpace(currentSpaceIndex + 1);
     }
 
     private string GetSpaceName(int index)

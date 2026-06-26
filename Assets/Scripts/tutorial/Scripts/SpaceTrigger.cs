@@ -13,22 +13,37 @@ public class SpaceTrigger : MonoBehaviour
 
     private void Awake()
     {
-        // Automatically find the controller if not assigned
         if (tutorialController == null)
         {
             tutorialController = FindFirstObjectByType<RobotTutorialController>();
         }
 
-        // Ensure Box Collider is set up as a trigger
         BoxCollider boxCollider = GetComponent<BoxCollider>();
         if (boxCollider != null && !boxCollider.isTrigger)
         {
             boxCollider.isTrigger = true;
-            Debug.LogWarning($"[SpaceTrigger] Box Collider on {gameObject.name} was not set to 'Is Trigger'. Automatically enabled it.", this);
+        }
+
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb == null)
+        {
+            rb = gameObject.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.useGravity = false;
         }
     }
 
     private void OnTriggerEnter(Collider other)
+    {
+        CheckAndNotifyUser(other);
+    }
+
+    private void OnTriggerStay(Collider other)
+    {
+        CheckAndNotifyUser(other);
+    }
+
+    private void CheckAndNotifyUser(Collider other)
     {
         if (tutorialController == null) return;
 
@@ -50,8 +65,16 @@ public class SpaceTrigger : MonoBehaviour
             isUser = true;
         }
 
+        // ONLY print if it is confirmed to be the player entering the zone
         if (isUser)
         {
+            // We only print if the robot is actually ready and waiting for this specific step
+            if (tutorialController.CurrentState == RobotTutorialController.TutorialState.WaitingForUser && 
+                (spaceIndex - 1) == tutorialController.CurrentSpaceIndex)
+            {
+                Debug.Log($"<color=green>[SpaceTrigger Success]</color> Player detected inside {gameObject.name}. Activating step {spaceIndex}!");
+            }
+
             tutorialController.OnUserEnteredSpace(spaceIndex);
         }
     }
