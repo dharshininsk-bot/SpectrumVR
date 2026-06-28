@@ -68,6 +68,8 @@ namespace EscapeRoom
 
         // ─── Private State ─────────────────────────────────────────────────────
 
+        public System.Action<bool, bool, bool> OnButtonStateChanged;
+
         private bool stateR = false;
         private bool stateG = false;
         private bool stateB = false;
@@ -148,6 +150,7 @@ namespace EscapeRoom
             stateR = !stateR;
             ApplyCylinderVisual(matR, stateR);
             Debug.Log($"[RGBButtonPanel] R toggled → {stateR}", this);
+            OnButtonStateChanged?.Invoke(stateR, stateG, stateB);
             EvaluateCombination();
         }
 
@@ -157,6 +160,7 @@ namespace EscapeRoom
             stateG = !stateG;
             ApplyCylinderVisual(matG, stateG);
             Debug.Log($"[RGBButtonPanel] G toggled → {stateG}", this);
+            OnButtonStateChanged?.Invoke(stateR, stateG, stateB);
             EvaluateCombination();
         }
 
@@ -166,6 +170,7 @@ namespace EscapeRoom
             stateB = !stateB;
             ApplyCylinderVisual(matB, stateB);
             Debug.Log($"[RGBButtonPanel] B toggled → {stateB}", this);
+            OnButtonStateChanged?.Invoke(stateR, stateG, stateB);
             EvaluateCombination();
         }
 

@@ -88,6 +88,7 @@ namespace EscapeRoom
             {
                 rgbButtonPanel.SetButtonsInteractable(false);
                 rgbButtonPanel.OnCorrectCombination.AddListener(OnCombinationCorrect);
+                rgbButtonPanel.OnButtonStateChanged += OnButtonStateChanged;
             }
         }
 
@@ -102,7 +103,10 @@ namespace EscapeRoom
         private void OnDestroy()
         {
             if (rgbButtonPanel != null)
+            {
                 rgbButtonPanel.OnCorrectCombination.RemoveListener(OnCombinationCorrect);
+                rgbButtonPanel.OnButtonStateChanged -= OnButtonStateChanged;
+            }
         }
 
         // ─── Public API ────────────────────────────────────────────────────────
@@ -199,6 +203,35 @@ namespace EscapeRoom
 
             if (StairManager.Instance != null)
                 StairManager.Instance.ReportStepSolved(this);
+        }
+
+        private void OnButtonStateChanged(bool r, bool g, bool b)
+        {
+            if (isSolved) return;
+
+            // Combine active colors additively:
+            Color activeColor = Color.black;
+            if (r) activeColor += Color.red;
+            if (g) activeColor += Color.green;
+            if (b) activeColor += Color.blue;
+
+            if (!r && !g && !b)
+            {
+                // Fallback: show the idle dim glow if no buttons are active
+                SetEmission(solvedEmissionColor * 0.06f);
+            }
+            else
+            {
+                // Scale by a strong intensity multiplier for the blending look
+                SetEmission(activeColor * 1.5f);
+            }
+        }
+
+        private void SetEmission(Color color)
+        {
+            if (glassMaterial == null) return;
+            glassMaterial.EnableKeyword("_EMISSION");
+            glassMaterial.SetColor("_EmissionColor", color);
         }
     }
 }

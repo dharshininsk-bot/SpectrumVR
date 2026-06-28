@@ -25,6 +25,16 @@ namespace EscapeRoom
         [Tooltip("If true, the display will automatically update to the first slide on start.")]
         [SerializeField] private bool showFirstOnStart = true;
 
+        [Header("TV State")]
+        [Tooltip("Specific GameObjects to hide until the TV is turned on (e.g., Next Button, Prev Button).")]
+        [SerializeField] private GameObject[] objectsToHideUntilActive;
+
+        [Tooltip("If true, the TV content will be hidden until TurnOnTV is called.")]
+        [SerializeField] private bool requiresActivation = false;
+
+        [Tooltip("If true, clears the image sprite when off instead of disabling the Image component. Useful if the Image is also your TV background.")]
+        [SerializeField] private bool clearSpriteWhenOff = true;
+
         [Header("Events")]
         [Tooltip("Triggered whenever the active note index changes.")]
         public UnityEvent<int> OnNoteIndexChanged;
@@ -51,9 +61,52 @@ namespace EscapeRoom
                 tvImageTarget = GetComponent<Image>();
             }
 
+            if (requiresActivation)
+            {
+                if (clearSpriteWhenOff)
+                {
+                    tvImageTarget.sprite = null;
+                }
+                else
+                {
+                    tvImageTarget.enabled = false;
+                }
+
+                if (objectsToHideUntilActive != null)
+                {
+                    foreach (var obj in objectsToHideUntilActive)
+                    {
+                        if (obj != null) obj.SetActive(false);
+                    }
+                }
+            }
+            else if (showFirstOnStart)
+            {
+                UpdateDisplay();
+            }
+        }
+
+        /// <summary>
+        /// Turns on the TV display, enabling the UI elements and showing the first note if configured.
+        /// </summary>
+        public void TurnOnTV()
+        {
+            if (objectsToHideUntilActive != null)
+            {
+                foreach (var obj in objectsToHideUntilActive)
+                {
+                    if (obj != null) obj.SetActive(true);
+                }
+            }
+            
             if (showFirstOnStart)
             {
                 UpdateDisplay();
+            }
+            else
+            {
+                // Just enable the image component if showFirstOnStart is false, but TurnOnTV was called
+                tvImageTarget.enabled = true;
             }
         }
 
