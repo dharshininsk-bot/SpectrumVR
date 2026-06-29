@@ -23,8 +23,8 @@ namespace EscapeRoom
         public Animator doorAnimator;
 
         [Header("End Game Sequence")]
-        [Tooltip("The name of the End Scene to load (e.g., '2_Outro'). Leave empty to quit the game instead.")]
-        public string sceneToLoadOnEnd = "";
+        [Tooltip("The UI GameObject containing the 'LEVEL CLEARED' message.")]
+        public GameObject levelClearedUI;
 
         [Header("Lock Settings")]
         [Tooltip("If true, interacting with the door will do nothing until UnlockDoor() is called.")]
@@ -49,6 +49,12 @@ namespace EscapeRoom
                 {
                     sphereRenderer.material = cyanGlowMaterial;
                 }
+            }
+            
+            // Ensure the UI is hidden at the start
+            if (levelClearedUI != null)
+            {
+                levelClearedUI.SetActive(false);
             }
         }
 
@@ -104,25 +110,26 @@ namespace EscapeRoom
 
         private System.Collections.IEnumerator EndGameRoutine()
         {
-            // Wait 5 seconds after the door opens so the animation finishes
-            yield return new WaitForSeconds(5f);
+            // Wait 5 seconds after the door opens
+            yield return new WaitForSeconds(8f);
 
-            // Either load the end scene, or exit the game
-            if (!string.IsNullOrEmpty(sceneToLoadOnEnd))
+            // Show the Level Cleared UI
+            if (levelClearedUI != null)
             {
-                Debug.Log($"Loading End Scene: {sceneToLoadOnEnd}");
-                UnityEngine.SceneManagement.SceneManager.LoadScene(sceneToLoadOnEnd);
+                levelClearedUI.SetActive(true);
             }
-            else
-            {
-                Debug.Log("Exiting Game...");
-                
-                #if UNITY_EDITOR
-                UnityEditor.EditorApplication.isPlaying = false;
-                #else
-                Application.Quit();
-                #endif
-            }
+
+            // Wait a little bit so the player can actually read the message before it suddenly closes
+            yield return new WaitForSeconds(4f);
+
+            // Exit the game
+            Debug.Log("Exiting Game...");
+            
+            #if UNITY_EDITOR
+            UnityEditor.EditorApplication.isPlaying = false;
+            #else
+            Application.Quit();
+            #endif
         }
     }
 }
